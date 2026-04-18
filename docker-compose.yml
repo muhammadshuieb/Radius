@@ -3,8 +3,17 @@ name: prince_radius_saas
 services:
   postgres:
     image: public.ecr.aws/docker/library/postgres:16-alpine
-    # Default Docker /dev/shm (64MB) is often too small; Postgres exits with code 1 on small VPS.
+    # Default Docker /dev/shm (64MB) is often too small; Postgres defaults shared_buffers=128MB → crashes
+    # with "could not resize shared memory segment". Some hosts ignore `shm_size`; tmpfs forces a real size.
     shm_size: 256mb
+    tmpfs:
+      - /dev/shm:rw,exec,size=256m
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=100
     environment:
       POSTGRES_USER: prince
       POSTGRES_PASSWORD: prince_dev_pass
