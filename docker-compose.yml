@@ -109,6 +109,10 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+      # API runs the same schema ensures before listen(); starting worker in parallel caused
+      # concurrent DDL on Postgres and intermittent API exit(1) on small VPS / shared DB.
+      api:
+        condition: service_started
 
   web:
     build:

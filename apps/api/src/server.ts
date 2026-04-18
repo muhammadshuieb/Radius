@@ -80,6 +80,10 @@ async function main() {
   }
 
   const host = process.env.LISTEN_HOST || "0.0.0.0";
+  httpServer.on("error", (err) => {
+    console.error("[http] listen error:", err);
+    process.exit(1);
+  });
   httpServer.listen(config.port, host, () => {
     console.log(`API listening on ${host}:${config.port} (ws /ws)`);
     void ensureWahaSessionReadyWithRetries();
