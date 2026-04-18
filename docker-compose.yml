@@ -13,6 +13,8 @@ services:
     image: public.ecr.aws/docker/library/postgres:16-alpine
     command: postgres
     restart: unless-stopped
+    # Helps default shared_buffers fit default 64MB /dev/shm on some VPS panels (avoids silent crash → "unhealthy").
+    shm_size: 256mb
     environment:
       POSTGRES_USER: prince
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prince_dev_pass}
@@ -20,15 +22,13 @@ services:
     volumes:
       - pg_data_v2:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    # start_period: first boot runs large init.sql; avoid marking unhealthy during bootstrap.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prince -d radius_saas"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    deploy:
-      resources:
-        limits:
-          memory: 512M
+      interval: 10s
+      timeout: 15s
+      retries: 30
+      start_period: 120s
 
   db-migrate:
     image: public.ecr.aws/docker/library/postgres:16-alpine
