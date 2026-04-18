@@ -1,6 +1,6 @@
 # Production API: compile TypeScript, run Node (no tsx in CMD)
 FROM public.ecr.aws/docker/library/node:20-alpine
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql-client curl
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
