@@ -3,6 +3,8 @@ name: prince_radius_saas
 services:
   postgres:
     image: public.ecr.aws/docker/library/postgres:16-alpine
+    # Default Docker /dev/shm (64MB) is often too small; Postgres exits with code 1 on small VPS.
+    shm_size: 256mb
     environment:
       POSTGRES_USER: prince
       POSTGRES_PASSWORD: prince_dev_pass

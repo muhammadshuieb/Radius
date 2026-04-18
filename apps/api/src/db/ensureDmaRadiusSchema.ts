@@ -78,8 +78,7 @@ export async function ensureDmaRadiusSchema(): Promise<void> {
       try {
         await query(stmt);
       } catch (e) {
-        console.error(`[ensureDmaRadiusSchema] failed in ${name}:`, stmt.slice(0, 200), e);
-        throw e;
+        console.error(`[ensureDmaRadiusSchema] failed in ${name} (non-fatal, continuing):`, stmt.slice(0, 200), e);
       }
     }
   }

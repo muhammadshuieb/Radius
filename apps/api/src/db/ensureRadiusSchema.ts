@@ -5,26 +5,28 @@ import { query } from "./pool.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** All four must exist — old DBs sometimes had only radacct, which breaks ensureAppSchema (ALTER radcheck). */
 export async function radiusAccountingTablesExist(): Promise<boolean> {
-  const { rows } = await query(
-    `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'radacct' LIMIT 1`
+  const { rows } = await query<{ c: string }>(
+    `SELECT count(*)::text AS c FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name IN ('radacct','radcheck','radreply','user_usage_daily')`
   );
-  return rows.length > 0;
+  return Number(rows[0]?.c ?? 0) >= 4;
 }
 
 /**
- * If radacct is missing (old Postgres volume), apply bundled SQL (idempotent IF NOT EXISTS).
+ * If RADIUS tables are incomplete (old Postgres volume), apply bundled SQL (idempotent IF NOT EXISTS).
  * Called from API + worker startup.
  */
-export async function ensureRadiusAccountingSchema(): Promise<boolean> {
-  if (await radiusAccountingTablesExist()) return true;
+export async function ensureRadiusAccountingSchema(): Promise<void> {
+  if (await radiusAccountingTablesExist()) return;
   const sqlPath = path.join(__dirname, "../../sql/radius_accounting.sql");
   let sql: string;
   try {
     sql = readFileSync(sqlPath, "utf8");
   } catch (e) {
-    console.warn("[ensureRadiusAccountingSchema] Could not read sql file:", sqlPath, e);
-    return false;
+    throw new Error(`[ensureRadiusAccountingSchema] Could not read ${sqlPath}`, { cause: e });
   }
   const stripped = sql.replace(/^--[^\r\n]*(\r\n|\n|\r)/gm, "");
   const statements = stripped
@@ -34,7 +36,10 @@ export async function ensureRadiusAccountingSchema(): Promise<boolean> {
   for (const stmt of statements) {
     await query(stmt);
   }
-  const ok = await radiusAccountingTablesExist();
-  if (ok) console.log("[ensureRadiusAccountingSchema] radacct / radcheck / radreply / user_usage_daily ready");
-  return ok;
+  if (!(await radiusAccountingTablesExist())) {
+    throw new Error(
+      "[ensureRadiusAccountingSchema] RADIUS tables still incomplete after apply (need radacct, radcheck, radreply, user_usage_daily)."
+    );
+  }
+  console.log("[ensureRadiusAccountingSchema] radacct / radcheck / radreply / user_usage_daily ready");
 }
