@@ -1,0 +1,130 @@
+name: prince_radius_saas
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: prince
+      POSTGRES_PASSWORD: prince_dev_pass
+      POSTGRES_DB: radius_saas
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prince -d radius_saas"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  db-migrate:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    environment:
+      PGPASSWORD: prince_dev_pass
+    volumes:
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      "set -e && until pg_isready -h postgres -U prince -d radius_saas; do sleep 1; done && psql -h postgres -U prince -d radius_saas -v ON_ERROR_STOP=1 -f /migrations/002_radius_accounting.sql && echo db-migrate OK"
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # WAHA — WhatsApp HTTP API (https://github.com/devlikeapro/waha). Dashboard: http://localhost:3000
+  # Session auth files MUST persist: keep volume waha_sessions. Do not use `docker compose down -v` or you will lose the link and need QR again.
+  waha:
+    image: devlikeapro/waha:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      WHATSAPP_API_PORT: "3000"
+      WAHA_API_KEY: ${WAHA_API_KEY:-change-me-waha-api-key}
+      WAHA_BASE_URL: http://localhost:3000
+      # Explicit local session store (must match the volume mount below)
+      WAHA_LOCAL_STORE_BASE_DIR: /app/.sessions
+      # After container restart: start the same session so WAHA reconnects from saved auth (no new QR if volume kept)
+      WHATSAPP_START_SESSION: ${WAHA_SESSION_NAME:-default}
+    volumes:
+      - waha_sessions:/app/.sessions
+
+  api:
+    build:
+      context: ./apps/api
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      LISTEN_HOST: "0.0.0.0"
+      DATABASE_URL: postgresql://prince:prince_dev_pass@postgres:5432/radius_saas
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: change-me-in-production-use-long-random-string
+      NODE_ENV: development
+      WAHA_BASE_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY:-change-me-waha-api-key}
+      # WAHA Core (free image) only accepts session name "default"
+      WAHA_SESSION_NAME: ${WAHA_SESSION_NAME:-default}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 120s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      waha:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./apps/api
+    command: ["npx", "tsx", "src/worker.ts"]
+    environment:
+      DATABASE_URL: postgresql://prince:prince_dev_pass@postgres:5432/radius_saas
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: change-me-in-production-use-long-random-string
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        # Must match where the browser can reach the API (host-mapped port 4000).
+        VITE_API_URL: http://localhost:4000
+    ports:
+      - "5174:5174"
+    # Vite proxy: reach the API on the Compose network by service name. Using
+    # host.docker.internal:4000 routes via the host and often causes "socket hang up"
+    # on Docker Desktop; api:4000 is stable and stays on the bridge network.
+    environment:
+      VITE_PROXY_TARGET: http://api:4000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+  waha_sessions:

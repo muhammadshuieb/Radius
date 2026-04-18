@@ -1,0 +1,47 @@
+# Infrastructure only (no Node build) — use when Docker Hub / image pulls fail.
+# Run: docker compose -f docker-compose.infra.yml up -d
+# Then from host: cd apps/api && npm install && npm run dev
+#     and:       cd apps/web && npm install && npm run dev
+# DATABASE_URL=postgresql://prince:prince_dev_pass@127.0.0.1:5432/radius_saas
+# REDIS_URL=redis://127.0.0.1:6379
+
+name: prince_radius_saas_infra
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: prince
+      POSTGRES_PASSWORD: prince_dev_pass
+      POSTGRES_DB: radius_saas
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prince -d radius_saas"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  db-migrate:
+    image: public.ecr.aws/docker/library/postgres:16-alpine
+    environment:
+      PGPASSWORD: prince_dev_pass
+    volumes:
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      "set -e && until pg_isready -h postgres -U prince -d radius_saas; do sleep 1; done && psql -h postgres -U prince -d radius_saas -v ON_ERROR_STOP=1 -f /migrations/002_radius_accounting.sql && echo db-migrate OK"
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pg_data:
